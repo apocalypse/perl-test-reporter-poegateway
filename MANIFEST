@@ -4,7 +4,6 @@ MANIFEST.SKIP
 README
 lib/Test/Reporter/POEGateway.pm
 lib/Test/Reporter/POEGateway/Mailer.pm
-lib/Test/Reporter/POEGateway/Mailer/Base.pm
 lib/Test/Reporter/POEGateway/Mailer/SMTP.pm
 META.yml
 Changes

@@ -6,14 +6,74 @@ use strict; use warnings;
 use vars qw( $VERSION );
 $VERSION = '0.01';
 
-# Set our base
-use base 'Test::Reporter::POEGateway::Mailer::Base';
+# Load some necessary modules
+use POE::Filter::Reference;
 
 # The mailer config we use
 my $config = undef;
 
 # The smtp object
 my $smtp = undef;
+
+# This is the subroutine that will get executed upon the fork() call by our parent
+sub main {
+	# Autoflush to avoid weirdness
+	$|++;
+
+	# set binmode, thanks RT #43442
+	binmode( STDIN );
+	#binmode( STDOUT );
+
+	# Our Filter object
+	my $filter = POE::Filter::Reference->new();
+
+	# Sysread error hits
+	my $sysreaderr = 0;
+
+	MAINLOOP:
+
+	# Okay, now we listen for commands from our parent :)
+	while ( sysread( STDIN, my $buffer = '', 1024 ) ) {
+		# Feed the line into the filter
+		my $data = $filter->get( [ $buffer ] );
+
+		# INPUT STRUCTURE IS:
+		# $d->{'ACTION'}	= SCALAR	->	WHAT WE SHOULD DO
+		# $d->{'DATA'}		= HASH		->	DATA FOR THE ACTION
+
+		# Process each data structure
+		foreach my $input ( @$data ) {
+			# Now, we do the actual work depending on what kind of query it was
+			if ( $input->{'ACTION'} eq 'CONFIG' ) {
+				# Setup the config
+				DO_CONFIG( $input->{'DATA'} );
+			} elsif ( $input->{'ACTION'} eq 'SEND' ) {
+				# Send a report!
+				my $ret = DO_SEND( $input->{'DATA'} );
+				if ( defined $ret ) {
+					print "NOK $ret\n";
+				} else {
+					print "OK\n";
+				}
+			} else {
+				# Unrecognized action!
+				print "ERROR Unknown action ($input->{'ACTION'})\n";
+			}
+		}
+	}
+
+	# Arrived here due to error in sysread/etc
+	print "ERROR SYSREAD\n";
+
+	# If we got more than 5 sysread errors, abort!
+	if ( ++$sysreaderr == 5 ) {
+		exit 0;
+	} else {
+		goto MAINLOOP;
+	}
+
+	return;
+}
 
 # initializes our config
 sub DO_CONFIG {
@@ -76,7 +136,7 @@ sub DO_SEND {
 	# Prepare the data
 	my $msg =	"To: $config->{'to'}\n";
 	$msg .=		"Subject: $data->{'subject'}\n";
-	$msg .=		"X-Reported-Via: $data->{'_via'}\n";
+	$msg .=		"X-Reported-Via: $data->{'via'}\n";
 	$msg .=		"X-Reported-FromHost: $data->{'_host'}\n" if exists $data->{'_host'};
 	$msg .=		"\n";
 	$msg .=		$data->{'report'} . "\n";

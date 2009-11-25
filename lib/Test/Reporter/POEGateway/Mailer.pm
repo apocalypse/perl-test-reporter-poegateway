@@ -9,6 +9,8 @@ $VERSION = '0.01';
 # Import what we need from the POE namespace
 use POE;
 use POE::Wheel::Run;
+use POE::Filter::Reference;
+use POE::Filter::Line;
 use POE::Component::DirWatch;
 use base 'POE::Session::AttributeBased';
 
@@ -219,41 +221,36 @@ sub got_new_file : State {
 	my $file = $_[ARG1]->[0];
 
 	if ( DEBUG ) {
-		warn __PACKAGE__ . ": got a new file -> $file";
+		warn "Got a new file -> $file";
 	}
 
 	# Add it to the newfile list
 	push( @{ $_[HEAP]->{'NEWFILES'} }, $file->stringify );
 
 	# We're done!
-	$_[KERNEL]->yield( 'ready_send' );
-
-	return;
-}
-
-sub ready_send : State {
-	if ( defined $_[HEAP]->{'WHEEL'} ) {
-		if ( ! $_[HEAP]->{'WHEEL_WORKING'} ) {
-			$_[KERNEL]->yield( 'send_report' );
-		} else {
-			# Wait for the subprocess to send the report!
-		}
-	} else {
-		# Setup the subprocess!
-		$_[KERNEL]->yield( 'setup_wheel' );
-	}
+	$_[KERNEL]->yield( 'send_report' );
 
 	return;
 }
 
 sub send_report : State {
+	if ( ! defined $_[HEAP]->{'WHEEL'} ) {
+		# Setup the subprocess!
+		$_[KERNEL]->yield( 'setup_wheel' );
+		return;
+	}
+
+	if ( $_[HEAP]->{'WHEEL_WORKING'} ) {
+		return;
+	}
+
 	# Grab the first file from the array
-	my $file = shift( @{ $_[HEAP]->{'NEWFILES'} } );
+	my $file = $_[HEAP]->{'NEWFILES'}->[0];
 	if ( ! defined $file ) {
 		return;
 	}
 
-	my $data = LoadFile( File::Spec->catfile( $_[HEAP]->{'REPORTS'}, $file ) );
+	my $data = LoadFile( $file );
 	if ( ! defined $data ) {
 		if ( DEBUG ) {
 			warn "Malformed file: $file";
@@ -262,10 +259,9 @@ sub send_report : State {
 	}
 
 	# do some housekeeping
-	if ( exists $_[HEAP]->{'host_aliases'}->{ $data->{'_sender'} } ) {
-		$data->{'_host'} = $_[HEAP]->{'host_aliases'}->{ $data->{'_sender'} };
+	if ( exists $_[HEAP]->{'HOST_ALIASES'}->{ $data->{'_sender'} } ) {
+		$data->{'_host'} = $_[HEAP]->{'HOST_ALIASES'}->{ $data->{'_sender'} };
 	}
-	$data->{'_file'} = $file;
 
 	# send it off to the subprocess!
 	$_[HEAP]->{'WHEEL'}->put( {
@@ -286,7 +282,7 @@ sub setup_wheel : State {
 
 	# Check if we should set up the wheel
 	if ( $_[HEAP]->{'WHEEL_RETRIES'} == 5 ) {
-		die __PACKAGE__ . ' tried ' . 5 . ' times to create a subprocess and is giving up...';
+		die 'Tried ' . 5 . ' times to create a subprocess and is giving up...';
 	}
 
 	# Set up the SubProcess we communicate with
@@ -338,6 +334,9 @@ sub setup_wheel : State {
 			'ACTION'	=> 'CONFIG',
 			'DATA'		=> $_[HEAP]->{'MAILER_CONF'},
 		} );
+
+		# Do we need to send something?
+		$_[KERNEL]->yield( 'send_report' );
 	}
 
 	return;
@@ -347,7 +346,7 @@ sub setup_wheel : State {
 sub ChildClosed : State {
 	# Emit debugging information
 	if ( DEBUG ) {
-		warn __PACKAGE__ . "'s subprocess died!";
+		warn "The subprocess died!";
 	}
 
 	# Get rid of the wheel
@@ -367,7 +366,7 @@ sub ChildError : State {
 	if ( DEBUG ) {
 		# Copied from POE::Wheel::Run manpage
 		my ( $operation, $errnum, $errstr ) = @_[ ARG0 .. ARG2 ];
-		warn __PACKAGE__ . " got an $operation error $errnum: $errstr\n";
+		warn "Got an $operation error $errnum: $errstr\n";
 	}
 
 	return;
@@ -386,43 +385,48 @@ sub Got_STDERR : State {
 	# Skip empty lines as the POE::Filter::Line manpage says...
 	if ( $input eq '' ) { return }
 
-	warn __PACKAGE__ . ": Got STDERR from child, which should never happen ( $input )";
+	warn "Got STDERR from child, which should never happen ( $input )";
 
 	return;
 }
 
 # Handles child STDOUT output
-sub Got_STDOUT {
+sub Got_STDOUT : State {
 	# The data!
 	my $data = $_[ARG0];
 
 	if ( DEBUG ) {
-		warn __PACKAGE__ . ": got stdout '$data'";
+		warn "Got stdout ($data)";
 	}
 
-	# We should get: "OK $file" or "NOK $error"
-	if ( $data =~ /^OK\s+(.+)$/ ) {
-		my $file = $1;
+	# We should get: "OK" or "NOK $error"
+	if ( $data =~ /^N?OK/ ) {
+		my $file = shift( @{ $_[HEAP]->{'NEWFILES'} } );
 
-		# get rid of the file and move on!
-		my $path = File::Spec->catfile( $_[HEAP]->{'REPORTS'}, $file );
-		unlink( $path ) or warn __PACKAGE__ . ": Unable to delete $path: $!";
-	} elsif ( $data =~ /^NOK\s+(.+)$/ ) {
-		my $err = $1;
+		if ( $data eq 'OK' ) {
+			if ( DEBUG ) {
+				warn "Successfully sent $file report";
+			}
 
-		# argh!
-		warn __PACKAGE__ . ": Unable to send report: $err";
+			# get rid of the file and move on!
+			unlink( $file ) or warn "Unable to delete $file: $!";
+		} elsif ( $data =~ /^NOK\s+(.+)$/ ) {
+			my $err = $1;
+
+			# argh!
+			warn "Unable to send report: $err";
+		}
+
+		# Send another report?
+		$_[HEAP]->{'WHEEL_WORKING'} = 0;
+		$_[KERNEL]->yield( 'send_report' );
 	} elsif ( $data =~ /^ERROR\s+(.+)$/ ) {
 		# hmpf!
 		my $err = $1;
-		warn __PACKAGE__ . ": Unexpected error: $err";
+		warn "Unexpected error: $err";
 	} else {
-		warn __PACKAGE__ . ": Unknown line: $data";
+		warn "Unknown line: $data";
 	}
-
-	# Send another report?
-	$_[HEAP]->{'WHEEL_WORKING'} = 0;
-	$_[KERNEL]->yield( 'send_report' );
 
 	return;
 }
