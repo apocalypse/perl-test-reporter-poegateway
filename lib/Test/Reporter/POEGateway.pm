@@ -71,12 +71,13 @@ sub spawn {
 
 	# setup the path to store reports
 	if ( ! exists $opt{'reports'} or ! defined $opt{'reports'} ) {
+		my $path = File::Spec->catdir( $ENV{HOME}, 'cpan_reports' );
 		if ( DEBUG ) {
-			warn 'Using default REPORTS = "$ENV{HOME}/cpan_reports"';
+			warn "Using default REPORTS = '$path'";
 		}
 
 		# Set the default
-		$opt{'reports'} = File::Spec->catdir( $ENV{HOME}, 'cpan_reports' );
+		$opt{'reports'} = $path;
 	}
 
 	# validate the report path
@@ -204,8 +205,17 @@ sub got_req : State {
 
 	# not a malformed request...
 	if ( ! defined $response->code ) {
-		# store the request somewhere
-		save_report( $form, $request, $response );
+		# add some misc info
+		$form->{'_sender'} = $response->connection->remote_ip;
+		$form->{'via'} .= ', via ' . __PACKAGE__ . ' ' . $VERSION;
+
+		# calculate the filename
+		my $filename = File::Spec->catfile( $_[HEAP]->{'REPORTS'}, time() . '.' . sha1_hex( $form->{'report'} ) );
+		DumpFile( $filename, $form );
+
+		if ( DEBUG ) {
+			warn "Saved $form->{subject} report to $filename";
+		}
 
 		# Do our stuff to HTTP::Response
 		$response->code( 200 );
@@ -214,25 +224,6 @@ sub got_req : State {
 
 	# We are done!
 	$_[KERNEL]->post( 'HTTPD', 'DONE', $response );
-
-	return;
-}
-
-# does the brunt work of saving posted reports
-sub save_report {
-	my( $form, $request, $response ) = @_;
-
-	# add some misc info
-	$form->{'_sender'} = $response->connection->remote_ip;
-	$form->{'via'} .= ', via ' . __PACKAGE__ . ' ' . $VERSION;
-
-	# calculate the filename
-	my $filename = time() . '.' . sha1_hex( $form->{'report'} );
-	DumpFile( File::Spec->catfile( $_[HEAP]->{'REPORTS'}, $filename ), $form );
-
-	if ( DEBUG ) {
-		warn "Saved $form->{subject} report to $filename";
-	}
 
 	return;
 }

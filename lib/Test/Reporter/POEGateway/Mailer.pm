@@ -49,7 +49,7 @@ sub spawn {
 	if ( ! exists $opt{'reports'} or ! defined $opt{'reports'} ) {
 		my $path = File::Spec->catdir( $ENV{HOME}, 'cpan_reports' );
 		if ( DEBUG ) {
-			warn 'Using default REPORTS = "$path"';
+			warn "Using default REPORTS = '$path'";
 		}
 
 		# Set the default
@@ -395,6 +395,10 @@ sub Got_STDERR : State {
 sub Got_STDOUT {
 	# The data!
 	my $data = $_[ARG0];
+
+	if ( DEBUG ) {
+		warn __PACKAGE__ . ": got stdout '$data'";
+	}
 
 	# We should get: "OK $file" or "NOK $error"
 	if ( $data =~ /^OK\s+(.+)$/ ) {
