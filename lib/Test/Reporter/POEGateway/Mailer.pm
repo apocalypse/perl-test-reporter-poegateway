@@ -218,6 +218,10 @@ sub shutdown : State {
 sub got_new_file : State {
 	my $file = $_[ARG1]->[0];
 
+	if ( DEBUG ) {
+		warn __PACKAGE__ . ": got a new file -> $file";
+	}
+
 	# Add it to the newfile list
 	push( @{ $_[HEAP]->{'NEWFILES'} }, $file->stringify );
 
