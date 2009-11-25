@@ -141,6 +141,7 @@ sub _start : State {
 		'HANDLERS'	=> [
 			{
 				'DIR'		=> '.*',
+				'SESSION'	=> $_[SESSION],
 				'EVENT'		=> 'got_req',
 			},
 		],
