@@ -24,16 +24,22 @@ sub DO_CONFIG {
 	$config->{'smtp_host'} = 'localhost' if ! exists $config->{'smtp_host'};
 	$config->{'smtp_opts'} = {} if ! exists $config->{'smtp_opts'};
 
+	# Get rid of our old smtp if needed
+	undef $smtp;
+
 	return;
 }
 
 sub setup_smtp {
+	return if defined $smtp;
+
 	# Do we want ssl?
 	my $pkg = 'Net::SMTP';
 	if ( exists $config->{'ssl'} ) {
 		$pkg .= '::SSL';
 	}
 
+	eval "require $pkg"; die $@ if $@;
 	$smtp = $pkg->new(
 		$config->{'smtp_host'},
 		%{ $config->{'smtp_opts'} },
