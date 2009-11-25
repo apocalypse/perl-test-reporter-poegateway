@@ -320,6 +320,8 @@ None.
 
 =head1 SEE ALSO
 
+L<Test::Reporter::POEGateway::Mailer>
+
 L<Test::Reporter::HTTPGateway>
 
 L<Test::Reporter>
