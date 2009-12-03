@@ -22,7 +22,6 @@ sub main {
 
 	# set binmode, thanks RT #43442
 	binmode( STDIN );
-	#binmode( STDOUT );
 
 	# Our Filter object
 	my $filter = POE::Filter::Reference->new();
@@ -99,7 +98,10 @@ sub setup_smtp {
 		$pkg .= '::SSL';
 	}
 
+	## no critic ProhibitStringyEval
 	eval "require $pkg"; die $@ if $@;
+	## use critic
+
 	$smtp = $pkg->new(
 		$config->{'smtp_host'},
 		%{ $config->{'smtp_opts'} },
@@ -108,6 +110,8 @@ sub setup_smtp {
 	# Do AUTH if needed
 	if ( exists $config->{'auth_user'} ) {
 		if ( ! $smtp->auth( $config->{'auth_user'}, $config->{'auth_pass'} ) ) {
+			$smtp->quit;
+			undef $smtp;
 			return "Unable to AUTH to the smtp server";
 		}
 	}
@@ -126,10 +130,14 @@ sub DO_SEND {
 
 	# send it!
 	if ( ! $smtp->mail( $data->{'from'} ) ) {
+		$smtp->quit;
+		undef $smtp;
 		return "Unable to set 'from' address";
 	}
 
 	if ( ! $smtp->to( $config->{'to'} ) ) {
+		$smtp->quit;
+		undef $smtp;
 		return "Unable to set 'to' address";
 	}
 
@@ -137,11 +145,12 @@ sub DO_SEND {
 	my $msg =	"To: $config->{'to'}\n";
 	$msg .=		"Subject: $data->{'subject'}\n";
 	$msg .=		"X-Reported-Via: $data->{'via'}\n";
-	$msg .=		"X-Reported-FromHost: $data->{'_host'}\n" if exists $data->{'_host'};
 	$msg .=		"\n";
 	$msg .=		$data->{'report'} . "\n";
 
 	if ( ! $smtp->data( $msg ) ) {
+		$smtp->quit;
+		undef $smtp;
 		return "Unable to send message";
 	}
 
@@ -151,6 +160,8 @@ sub DO_SEND {
 
 1;
 __END__
+
+=for stopwords AUTH smtp ssl
 
 =head1 NAME
 

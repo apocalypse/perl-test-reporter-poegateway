@@ -169,7 +169,7 @@ sub shutdown : State {
 	$_[KERNEL]->alias_remove( $_[HEAP]->{'ALIAS'} );
 
 	# tell poco-simplehttp to shutdown
-	$_[KERNEL]->post( $_[HEAP]->{'httpd'}->{'alias'}, 'SHUTDOWN' );
+	$_[KERNEL]->post( $_[HEAP]->{'HTTPD_OPT'}->{'ALIAS'}, 'SHUTDOWN' );
 
 	return;
 }
@@ -208,6 +208,7 @@ sub got_req : State {
 		# add some misc info
 		$form->{'_sender'} = $response->connection->remote_ip;
 		$form->{'via'} .= ', via ' . __PACKAGE__ . ' ' . $VERSION;
+		delete $form->{'key'} if exists $form->{'key'};
 
 		# calculate the filename
 		my $filename = File::Spec->catfile( $_[HEAP]->{'REPORTS'}, time() . '.' . sha1_hex( $form->{'report'} ) );
@@ -230,6 +231,8 @@ sub got_req : State {
 
 1;
 __END__
+
+=for stopwords AnnoCPAN CPAN HOSTNAME RT TODO callback cgi
 
 =head1 NAME
 
