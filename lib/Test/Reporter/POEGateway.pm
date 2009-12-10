@@ -305,13 +305,16 @@ Tells this module to shut down the underlying httpd session and terminate itself
 
 	$_[KERNEL]->post( 'POEGateway', 'shutdown' );
 
-=head2 TODO
+=head2 More Ideas
 
 None as of now, if you have ideas please submit them to me!
 
-=head1 EXPORT
+=head2 Module Notes
 
-None.
+You can enable debugging mode by doing this:
+
+	sub Test::Reporter::POEGateway::DEBUG () { 1 }
+	use Test::Reporter::POEGateway;
 
 =head1 SEE ALSO
 
@@ -350,6 +353,10 @@ L<http://rt.cpan.org/NoAuth/Bugs.html?Dist=Test-Reporter-POEGateway>
 =item * Search CPAN
 
 L<http://search.cpan.org/dist/Test-Reporter-POEGateway>
+
+=item * CPAN Testing Service
+
+L<http://cpants.perl.org/dist/overview/Test-Reporter-POEGateway>
 
 =back
 
