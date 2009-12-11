@@ -39,7 +39,7 @@ my $build = Module::Build->new(
 		'YAML::Tiny'			=> 0,
 		'Digest::SHA'			=> 0,
 		'File::Spec'			=> 0,
-		'Array::Unique'			=> 0,
+		'File::Copy'			=> 0,
 
 		# for our mailers
 		'Net::SMTP'			=> 0,

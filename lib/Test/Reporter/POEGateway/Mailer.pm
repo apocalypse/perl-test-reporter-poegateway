@@ -17,7 +17,7 @@ use base 'POE::Session::AttributeBased';
 # Misc modules we need
 use YAML::Tiny qw( LoadFile );
 use File::Spec;
-use Array::Unique;
+use File::Copy qw( move );
 
 # Set some constants
 BEGIN {
@@ -114,11 +114,11 @@ sub spawn {
 	# setup the dirwatch interval
 	if ( ! exists $opt{'dirwatch_interval'} or ! defined $opt{'dirwatch_interval'} ) {
 		if ( DEBUG ) {
-			warn 'Using default dirwatch_interval = 30';
+			warn 'Using default dirwatch_interval = 120';
 		}
 
 		# Set the default
-		$opt{'dirwatch_interval'} = 30;
+		$opt{'dirwatch_interval'} = 120;
 	}
 
 	# setup the host aliases
@@ -136,10 +136,6 @@ sub spawn {
 		}
 	}
 
-	# create our unique newfiles array
-	my @newfiles = ();
-	tie @newfiles, 'Array::Unique';
-
 	# Create our session
 	POE::Session->create(
 		__PACKAGE__->inline_states(),
@@ -153,7 +149,7 @@ sub spawn {
 			'HOST_ALIASES'		=> $opt{'host_aliases'},
 
 			'DIRWATCH'		=> undef,
-			'NEWFILES'		=> \@newfiles,
+			'NEWFILES'		=> [],
 			'WHEEL'			=> undef,
 			'WHEEL_WORKING'		=> 0,
 			'WHEEL_RETRIES'		=> 0,
@@ -215,19 +211,33 @@ sub shutdown : State {
 
 # received a postback from DirWatch
 sub got_new_file : State {
-	my $file = $_[ARG1]->[0];
+	my $file = $_[ARG1]->[0]->stringify;
 
-	if ( DEBUG ) {
-		warn "Got a new file -> $file";
+	# Have we seen this file before?
+	if ( ! fgrep( $file, $_[HEAP]->{'NEWFILES'} ) ) {
+		if ( DEBUG ) {
+			warn "Got a new file -> $file";
+		}
+
+		# Add it to the newfile list
+		push( @{ $_[HEAP]->{'NEWFILES'} }, $file );
+
+		# We're done!
+		$_[KERNEL]->yield( 'send_report' );
 	}
 
-	# Add it to the newfile list
-	push( @{ $_[HEAP]->{'NEWFILES'} }, $file->stringify );
-
-	# We're done!
-	$_[KERNEL]->yield( 'send_report' );
-
 	return;
+}
+
+# 'fast' grep that returns as soon as a match is found
+sub fgrep {
+	my( $str, $ary ) = @_;
+	foreach my $s ( @$ary ) {
+		if ( $s eq $str ) {
+			return 1;
+		}
+	}
+	return 0;
 }
 
 sub send_report : State {
@@ -247,11 +257,27 @@ sub send_report : State {
 		return;
 	}
 
-	my $data = LoadFile( $file );
-	if ( ! defined $data ) {
+	# TODO Sometimes DirWatch gives us a new file notification *AFTER* we delete it... WTF???
+	if ( ! -f $file ) {
+		return;
+	}
+
+	my $data;
+	eval {
+		$data = LoadFile( $file );
+	};
+	if ( $@ ) {
+		if ( DEBUG ) {
+			warn "Failed to load '$file': $@";
+		}
+
+		$_[KERNEL]->yield( 'save_failure', shift @{ $_[HEAP]->{'NEWFILES'} }, 'load' );
+		return;
+	} elsif ( ! defined $data ) {
 		if ( DEBUG ) {
 			warn "Malformed file: $file";
 		}
+		$_[KERNEL]->yield( 'save_failure', shift @{ $_[HEAP]->{'NEWFILES'} }, 'malformed' );
 		return;
 	}
 
@@ -267,6 +293,29 @@ sub send_report : State {
 		'DATA'		=> $data,
 	} );
 	$_[HEAP]->{'WHEEL_WORKING'} = 1;
+
+	return;
+}
+
+sub save_failure : State {
+	my( $file, $reason ) = @_[ARG0, ARG1];
+
+	# Get the filename only
+	my $filename = ( File::Spec->splitpath( $file ) )[2];
+
+	# Create the "fail" subdirectory if it doesn't exist
+	my $faildir = File::Spec->catdir( $_[HEAP]->{'REPORTS'}, "fail" );
+	if ( ! -d $faildir ) {
+		mkdir( $faildir ) or die "Unable to mkdir '$faildir': $!";
+	}
+
+	# come up with a new name and move it
+	$filename = $filename . '.' . $reason;
+	$filename = File::Spec->catdir( $faildir, $filename );
+	move( $file, $filename ) or die "Unable to move '$file': $!";
+
+	# done with saving, let's retry the next report
+	$_[KERNEL]->yield( 'send_report' );
 
 	return;
 }
@@ -400,24 +449,23 @@ sub Got_STDOUT : State {
 	# We should get: "OK" or "NOK $error"
 	if ( $data =~ /^N?OK/ ) {
 		my $file = shift( @{ $_[HEAP]->{'NEWFILES'} } );
+		$_[HEAP]->{'WHEEL_WORKING'} = 0;
 
 		if ( $data eq 'OK' ) {
 			if ( DEBUG ) {
-				warn "Successfully sent $file report";
+				warn "Successfully sent report: $file";
 			}
 
 			# get rid of the file and move on!
-			unlink( $file ) or warn "Unable to delete $file: $!";
+			unlink( $file ) or die "Unable to delete $file: $!";
+			$_[KERNEL]->yield( 'send_report' );
 		} elsif ( $data =~ /^NOK\s+(.+)$/ ) {
 			my $err = $1;
 
 			# argh!
-			warn "Unable to send report: $err";
+			warn "Unable to send report for '$file': $err";
+			$_[KERNEL]->yield( 'save_failure', $file, 'send' );
 		}
-
-		# Send another report?
-		$_[HEAP]->{'WHEEL_WORKING'} = 0;
-		$_[KERNEL]->yield( 'send_report' );
 	} elsif ( $data =~ /^ERROR\s+(.+)$/ ) {
 		# hmpf!
 		my $err = $1;
@@ -488,6 +536,8 @@ The default is: POEGateway-Mailer
 
 This sets the path where it will read received report submissions. Should be the same path you set in L<Test::Reporter::POEGateway>.
 
+NOTE: If this module fails to send a report due to various errors, it will move the file to '$reports/fail' to avoid re-sending it over and over.
+
 The default is: $ENV{HOME}/cpan_reports
 
 =head3 mailer
@@ -516,7 +566,7 @@ The default is: POEGateway-Mailer-DirWatch
 
 This sets the interval passed to L<POE::Component::DirWatch>, please look at it's pod for more detail.
 
-The default is: 30
+The default is: 120
 
 =head3 host_aliases
 
