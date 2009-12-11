@@ -591,7 +591,7 @@ There is only one command you can use, as this is a very simple module.
 
 Tells this module to shut down the underlying httpd session and terminate itself.
 
-	$_[KERNEL]->post( 'POEGateway', 'shutdown' );
+	$_[KERNEL]->post( 'POEGateway-Mailer', 'shutdown' );
 
 =head2 TODO
 
