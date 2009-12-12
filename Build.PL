@@ -29,7 +29,6 @@ my $build = Module::Build->new(
 		'POE::Component::DirWatch'		=> 0,
 
 		# FIXME POE stuff that Test::Dependencies needs to see
-		'POE::Session'			=> 0,
 		'POE::Wheel::Run'		=> 0,
 		'POE::Filter::Reference'	=> 0,
 		'POE::Filter::Line'		=> 0,
@@ -43,6 +42,8 @@ my $build = Module::Build->new(
 
 		# for our mailers
 		'Net::SMTP'			=> 0,
+		'Email::Simple'			=> 0,
+		'Email::MessageID'		=> 0,
 
 		# set our minimum perl version
 		'perl'				=> '5.006',

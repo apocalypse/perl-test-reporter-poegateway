@@ -11,7 +11,6 @@ use POE;
 use POE::Wheel::Run;
 use POE::Filter::Reference;
 use POE::Filter::Line;
-use POE::Component::DirWatch;
 use base 'POE::Session::AttributeBased';
 
 # Misc modules we need
@@ -47,21 +46,52 @@ sub spawn {
 	# lowercase keys
 	%opt = map { lc($_) => $opt{$_} } keys %opt;
 
-	# setup the path to read reports from
-	if ( ! exists $opt{'reports'} or ! defined $opt{'reports'} ) {
-		my $path = File::Spec->catdir( $ENV{HOME}, 'cpan_reports' );
+	if ( exists $opt{'poegateway'} ) {
 		if ( DEBUG ) {
-			warn "Using default REPORTS = '$path'";
+			warn "Not using REPORTS, we will receive reports directly from POEGateway";
 		}
 
-		# Set the default
-		$opt{'reports'} = $path;
-	}
+		if ( exists $opt{'reports'} ) {
+			warn "You cannot use REPORTS with POEGATEWAY at the same time, preferring POEGATEWAY!";
+			delete $opt{'reports'};
+		}
+	} else {
+		# setup the path to read reports from
+		if ( ! exists $opt{'reports'} or ! defined $opt{'reports'} ) {
+			my $path = File::Spec->catdir( $ENV{HOME}, 'cpan_reports' );
+			if ( DEBUG ) {
+				warn "Using default REPORTS = $path";
+			}
 
-	# validate the report path
-	if ( ! -d $opt{'reports'} ) {
-		warn "The report path does not exist ($opt{'reports'}), please make sure it is a writable directory!";
-		return 0;
+			# Set the default
+			$opt{'reports'} = $path;
+		}
+
+		# validate the report path
+		if ( ! -d $opt{'reports'} ) {
+			warn "The report path does not exist ($opt{'reports'}), please make sure it is a writable directory!";
+			return 0;
+		}
+
+		# setup the dirwatch alias
+		if ( ! exists $opt{'dirwatch_alias'} or ! defined $opt{'dirwatch_alias'} ) {
+			if ( DEBUG ) {
+				warn 'Using default dirwatch_alias = POEGateway-Mailer-DirWatch';
+			}
+
+			# Set the default
+			$opt{'dirwatch_alias'} = 'POEGateway-Mailer-DirWatch';
+		}
+
+		# setup the dirwatch interval
+		if ( ! exists $opt{'dirwatch_interval'} or ! defined $opt{'dirwatch_interval'} ) {
+			if ( DEBUG ) {
+				warn 'Using default dirwatch_interval = 120';
+			}
+
+			# Set the default
+			$opt{'dirwatch_interval'} = 120;
+		}
 	}
 
 	# setup the alias
@@ -101,26 +131,6 @@ sub spawn {
 		}
 	}
 
-	# setup the dirwatch alias
-	if ( ! exists $opt{'dirwatch_alias'} or ! defined $opt{'dirwatch_alias'} ) {
-		if ( DEBUG ) {
-			warn 'Using default dirwatch_alias = POEGateway-Mailer-DirWatch';
-		}
-
-		# Set the default
-		$opt{'dirwatch_alias'} = 'POEGateway-Mailer-DirWatch';
-	}
-
-	# setup the dirwatch interval
-	if ( ! exists $opt{'dirwatch_interval'} or ! defined $opt{'dirwatch_interval'} ) {
-		if ( DEBUG ) {
-			warn 'Using default dirwatch_interval = 120';
-		}
-
-		# Set the default
-		$opt{'dirwatch_interval'} = 120;
-	}
-
 	# setup the host aliases
 	if ( ! exists $opt{'host_aliases'} or ! defined $opt{'host_aliases'} ) {
 		if ( DEBUG ) {
@@ -143,12 +153,14 @@ sub spawn {
 			'ALIAS'			=> $opt{'alias'},
 			'MAILER'		=> $opt{'mailer'},
 			'MAILER_CONF'		=> $opt{'mailer_conf'},
-			'REPORTS'		=> $opt{'reports'},
-			'DIRWATCH_ALIAS'	=> $opt{'dirwatch_alias'},
-			'DIRWATCH_INTERVAL'	=> $opt{'dirwatch_interval'},
 			'HOST_ALIASES'		=> $opt{'host_aliases'},
 
-			'DIRWATCH'		=> undef,
+			( exists $opt{'poegateway'} ? ( 'POEGATEWAY' => 1 ) : (
+				'REPORTS'		=> $opt{'reports'},
+				'DIRWATCH_ALIAS'	=> $opt{'dirwatch_alias'},
+				'DIRWATCH_INTERVAL'	=> $opt{'dirwatch_interval'},
+			) ),
+
 			'NEWFILES'		=> [],
 			'WHEEL'			=> undef,
 			'WHEEL_WORKING'		=> 0,
@@ -171,13 +183,16 @@ sub _start : State {
 	$_[KERNEL]->alias_set( $_[HEAP]->{'ALIAS'} );
 
 	# spawn the dirwatch
-	my $watcher = POE::Component::DirWatch->new(
-		'alias'		=> $_[HEAP]->{'DIRWATCH_ALIAS'},
-		'directory'	=> $_[HEAP]->{'REPORTS'},
-		'file_callback'	=> $_[SESSION]->postback( 'got_new_file' ),
-		'interval'	=> $_[HEAP]->{'DIRWATCH_INTERVAL'},
-	);
-	$_[HEAP]->{'DIRWATCH'} = $watcher;
+	if ( ! exists $_[HEAP]->{'POEGATEWAY'} ) {
+		require POE::Component::DirWatch;
+		POE::Component::DirWatch->import;	# needed to set AIO stuff, darn it!
+		$_[HEAP]->{'DIRWATCH'} = POE::Component::DirWatch->new(
+			'alias'		=> $_[HEAP]->{'DIRWATCH_ALIAS'},
+			'directory'	=> $_[HEAP]->{'REPORTS'},
+			'file_callback'	=> $_[SESSION]->postback( 'got_new_file' ),
+			'interval'	=> $_[HEAP]->{'DIRWATCH_INTERVAL'},
+		);
+	}
 
 	return;
 }
@@ -200,8 +215,10 @@ sub shutdown : State {
 	$_[KERNEL]->alias_remove( $_[HEAP]->{'ALIAS'} );
 
 	# tell dirwatcher to shutdown
-	$_[HEAP]->{'DIRWATCH'}->shutdown;
-	undef $_[HEAP]->{'DIRWATCH'};
+	if ( exists $_[HEAP]->{'DIRWATCH'} and defined $_[HEAP]->{'DIRWATCH'} ) {
+		$_[HEAP]->{'DIRWATCH'}->shutdown;
+		undef $_[HEAP]->{'DIRWATCH'};
+	}
 
 	$_[HEAP]->{'SHUTDOWN'} = 1;
 	undef $_[HEAP]->{'WHEEL'};
@@ -214,7 +231,7 @@ sub got_new_file : State {
 	my $file = $_[ARG1]->[0]->stringify;
 
 	# Have we seen this file before?
-	if ( ! fgrep( $file, $_[HEAP]->{'NEWFILES'} ) ) {
+	if ( ! grep { $_ eq $file } @{ $_[HEAP]->{'NEWFILES'} } ) {
 		if ( DEBUG ) {
 			warn "Got a new file -> $file";
 		}
@@ -229,15 +246,18 @@ sub got_new_file : State {
 	return;
 }
 
-# 'fast' grep that returns as soon as a match is found
-sub fgrep {
-	my( $str, $ary ) = @_;
-	foreach my $s ( @$ary ) {
-		if ( $s eq $str ) {
-			return 1;
-		}
+# We got a report directly from the POEGateway httpd!
+sub http_report : State {
+	my $report = $_[ARG0];
+
+	if ( DEBUG ) {
+		warn "Got a new report from POEGateway -> $report->{subject}";
 	}
-	return 0;
+
+	# Shove it in the queue
+	push( @{ $_[HEAP]->{'NEWFILES'} }, $report );
+	$_[KERNEL]->yield( 'send_report' );
+	return;
 }
 
 sub send_report : State {
@@ -257,28 +277,34 @@ sub send_report : State {
 		return;
 	}
 
-	# TODO Sometimes DirWatch gives us a new file notification *AFTER* we delete it... WTF???
-	if ( ! -f $file ) {
-		return;
-	}
-
+	# Is it a filename or hashref?
 	my $data;
-	eval {
-		$data = LoadFile( $file );
-	};
-	if ( $@ ) {
-		if ( DEBUG ) {
-			warn "Failed to load '$file': $@";
+	if ( ! ref $file ) {
+		# TODO Sometimes DirWatch gives us a new file notification *AFTER* we delete it... WTF???
+		if ( ! -f $file ) {
+			shift @{ $_[HEAP]->{'NEWFILES'} };
+			return;
 		}
 
-		$_[KERNEL]->yield( 'save_failure', shift @{ $_[HEAP]->{'NEWFILES'} }, 'load' );
-		return;
-	} elsif ( ! defined $data ) {
-		if ( DEBUG ) {
-			warn "Malformed file: $file";
+		eval {
+			$data = LoadFile( $file );
+		};
+		if ( $@ ) {
+			if ( DEBUG ) {
+				warn "Failed to load '$file': $@";
+			}
+
+			$_[KERNEL]->yield( 'save_failure', shift @{ $_[HEAP]->{'NEWFILES'} }, 'load' );
+			return;
+		} elsif ( ! defined $data ) {
+			if ( DEBUG ) {
+				warn "Malformed file: $file";
+			}
+			$_[KERNEL]->yield( 'save_failure', shift @{ $_[HEAP]->{'NEWFILES'} }, 'malformed' );
+			return;
 		}
-		$_[KERNEL]->yield( 'save_failure', shift @{ $_[HEAP]->{'NEWFILES'} }, 'malformed' );
-		return;
+	} else {
+		$data = $file;
 	}
 
 	# do some housekeeping
@@ -310,8 +336,7 @@ sub save_failure : State {
 	}
 
 	# come up with a new name and move it
-	$filename = $filename . '.' . $reason;
-	$filename = File::Spec->catdir( $faildir, $filename );
+	$filename = File::Spec->catfile( $faildir, $filename . '.' . $reason );
 	move( $file, $filename ) or die "Unable to move '$file': $!";
 
 	# done with saving, let's retry the next report
@@ -323,7 +348,7 @@ sub save_failure : State {
 sub setup_wheel : State {
 	# skip setup if we already have a wheel, eh?
 	if ( defined $_[HEAP]->{'WHEEL'} ) {
-		$_[KERNEL]->yield( 'ready_send' );
+		$_[KERNEL]->yield( 'send_report' );
 		return;
 	}
 
@@ -452,19 +477,31 @@ sub Got_STDOUT : State {
 		$_[HEAP]->{'WHEEL_WORKING'} = 0;
 
 		if ( $data eq 'OK' ) {
-			if ( DEBUG ) {
-				warn "Successfully sent report: $file";
+			if ( ! ref $file ) {
+				if ( DEBUG ) {
+					warn "Successfully sent report: $file";
+				}
+
+				# get rid of the file and move on!
+				unlink( $file ) or die "Unable to delete $file: $!";
+			} else {
+				if ( DEBUG ) {
+					warn "Successfully sent report: $file->{subject}";
+				}
 			}
 
-			# get rid of the file and move on!
-			unlink( $file ) or die "Unable to delete $file: $!";
 			$_[KERNEL]->yield( 'send_report' );
 		} elsif ( $data =~ /^NOK\s+(.+)$/ ) {
 			my $err = $1;
 
 			# argh!
-			warn "Unable to send report for '$file': $err";
-			$_[KERNEL]->yield( 'save_failure', $file, 'send' );
+			if ( ! ref $file ) {
+				warn "Unable to send report for '$file': $err";
+				$_[KERNEL]->yield( 'save_failure', $file, 'send' );
+			} else {
+				warn "Unable to send report for '$file->{subject}': $err";
+				$_[KERNEL]->yield( 'send_report' );
+			}
 		}
 	} elsif ( $data =~ /^ERROR\s+(.+)$/ ) {
 		# hmpf!
@@ -480,7 +517,7 @@ sub Got_STDOUT : State {
 1;
 __END__
 
-=for stopwords DirWatch TODO VM gentoo ip
+=for stopwords DirWatch TODO VM gentoo ip poegateway
 
 =head1 NAME
 
@@ -532,17 +569,38 @@ This sets the alias of the session.
 
 The default is: POEGateway-Mailer
 
+=head3 poegateway
+
+If this option is present in the arguments, this module will receive reports directly from the L<Test::Reporter::POEGateway> session. You cannot
+enable this option and use the reports argument below at the same time. If you enable this, this component will not use L<POE::Component::DirWatch>
+and ignores any options for it.
+
+The default is: undef ( not used )
+
+	use Test::Reporter::POEGateway;
+	use Test::Reporter::POEGateway::Mailer;
+
+	Test::Reporter::POEGateway->spawn(
+		'mailer'	=> 'mymailer',
+	);
+	Test::Reporter::POEGateway::Mailer->spawn(
+		'alias'		=> 'mymailer',
+		'poegateway'	=> 1,
+		'mailer'	=> 'SMTP',
+		'mailer_conf'	=> { ... },
+	);
+
 =head3 reports
 
 This sets the path where it will read received report submissions. Should be the same path you set in L<Test::Reporter::POEGateway>.
 
-NOTE: If this module fails to send a report due to various errors, it will move the file to '$reports/fail' to avoid re-sending it over and over.
+NOTE: If this module fails to send a report due to various reasons, it will move the file to '$reports/fail' to avoid re-sending it over and over.
 
 The default is: $ENV{HOME}/cpan_reports
 
 =head3 mailer
 
-This sets the default mailer subclass. The only one bundled with this distribution is L<Test::Reporter::POEGateway::Mailer::SMTP>.
+This sets the mailer subclass. The only one bundled with this distribution is L<Test::Reporter::POEGateway::Mailer::SMTP>.
 
 NOTE: This module automatically prepends "Test::Reporter::POEGateway::Mailer::" to the string.
 
@@ -558,13 +616,14 @@ The default is: {}
 
 =head3 dirwatch_alias
 
-This sets the alias of the L<POE::Component::DirWatch> session.
+This sets the alias of the L<POE::Component::DirWatch> session. Normally you don't need to touch the DirWatch session, but it is useful in certain
+situations. For example, if you wanted to pause the watcher or re-configure - all you need to do is to send events to this alias.
 
 The default is: POEGateway-Mailer-DirWatch
 
 =head3 dirwatch_interval
 
-This sets the interval passed to L<POE::Component::DirWatch>, please look at it's pod for more detail.
+This sets the interval passed to L<POE::Component::DirWatch>, please see the pod for more detail.
 
 The default is: 120
 
@@ -593,9 +652,9 @@ Tells this module to shut down the underlying httpd session and terminate itself
 
 	$_[KERNEL]->post( 'POEGateway-Mailer', 'shutdown' );
 
-=head2 TODO
+=head2 More Ideas
 
-Additional mailers, that's for sure. However, L<Test::Reporter::POEGateway::Mailer::SMTP> fits the bill for me; I'm lazy now :)
+Additional mailers ( sendmail ), that's for sure. However, L<Test::Reporter::POEGateway::Mailer::SMTP> fits the bill for me; I'm lazy now :)
 
 =head1 EXPORT
 

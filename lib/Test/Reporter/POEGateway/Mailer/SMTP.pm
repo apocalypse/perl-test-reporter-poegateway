@@ -8,6 +8,8 @@ $VERSION = '0.01';
 
 # Load some necessary modules
 use POE::Filter::Reference;
+use Email::Simple;
+use Email::MessageID;
 
 # The mailer config we use
 my $config = undef;
@@ -142,13 +144,18 @@ sub DO_SEND {
 	}
 
 	# Prepare the data
-	my $msg =	"To: $config->{'to'}\n";
-	$msg .=		"Subject: $data->{'subject'}\n";
-	$msg .=		"X-Reported-Via: $data->{'via'}\n";
-	$msg .=		"\n";
-	$msg .=		$data->{'report'} . "\n";
+	my $email = Email::Simple->create(
+		'body'		=> $data->{'report'},
+		'header'	=> [
+			'To'			=> $config->{'to'},
+			'From'			=> $data->{'from'},
+			'Subject'		=> $data->{'subject'},
+			'X-Reported-Via'	=> $data->{'via'},
+			'Message-ID'		=> Email::MessageID->new->in_brackets,
+		],
+	);
 
-	if ( ! $smtp->data( $msg ) ) {
+	if ( ! $smtp->data( $email->as_string ) ) {
 		$smtp->quit;
 		undef $smtp;
 		return "Unable to send message";
@@ -249,6 +256,8 @@ L<Test::Reporter::POEGateway::Mailer>
 L<Net::SMTP>
 
 L<Net::SMTP::SSL>
+
+L<Authen::SASL>
 
 =head1 AUTHOR
 

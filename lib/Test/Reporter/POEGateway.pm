@@ -69,21 +69,39 @@ sub spawn {
 	};
 	delete $opt{'httpd'}->{'HANDLERS'} if exists $opt{'httpd'}->{'HANDLERS'};
 
-	# setup the path to store reports
-	if ( ! exists $opt{'reports'} or ! defined $opt{'reports'} ) {
-		my $path = File::Spec->catdir( $ENV{HOME}, 'cpan_reports' );
-		if ( DEBUG ) {
-			warn "Using default REPORTS = '$path'";
+	# Do we have a mailer session?
+	if ( exists $opt{'mailer'} ) {
+		if ( ! defined $opt{'mailer'} ) {
+			warn "Please supply a valid mailer session!";
+			return 0;
+		} else {
+			if ( DEBUG ) {
+				warn "Using '$opt{'mailer'}' as the mailer session - not using REPORTS!";
+			}
 		}
 
-		# Set the default
-		$opt{'reports'} = $path;
-	}
+		# Remove any reports argument
+		if ( exists $opt{'reports'} ) {
+			warn "You cannot use REPORTS with MAILER at the same time, preferring MAILER!";
+			delete $opt{'reports'};
+		}
+	} else {
+		# setup the path to store reports
+		if ( ! exists $opt{'reports'} or ! defined $opt{'reports'} ) {
+			my $path = File::Spec->catdir( $ENV{HOME}, 'cpan_reports' );
+			if ( DEBUG ) {
+				warn "Using default REPORTS = '$path'";
+			}
 
-	# validate the report path
-	if ( ! -d $opt{'reports'} ) {
-		warn "The report path does not exist ($opt{'reports'}), please make sure it is a writable directory!";
-		return 0;
+			# Set the default
+			$opt{'reports'} = $path;
+		}
+
+		# validate the report path
+		if ( ! -d $opt{'reports'} ) {
+			warn "The report path does not exist ($opt{'reports'}), please make sure it is a writable directory!";
+			return 0;
+		}
 	}
 
 	# setup the alias
@@ -117,9 +135,9 @@ sub spawn {
 		__PACKAGE__->inline_states(),
 		'heap'	=>	{
 			'ALIAS'		=> $opt{'alias'},
-			'REPORTS'	=> $opt{'reports'},
 			'HTTPD_OPT'	=> $opt{'httpd'},
 			'KEY_CB'	=> $opt{'key_cb'},
+			( exists $opt{'mailer'} ? ( 'MAILER' => $opt{'mailer'} ) : ( 'REPORTS' => $opt{'reports'} ) ),
 		},
 	);
 
@@ -210,12 +228,27 @@ sub got_req : State {
 		$form->{'via'} .= ', via ' . __PACKAGE__ . ' ' . $VERSION;
 		delete $form->{'key'} if exists $form->{'key'};
 
-		# calculate the filename
-		my $filename = File::Spec->catfile( $_[HEAP]->{'REPORTS'}, time() . '.' . sha1_hex( $form->{'report'} ) );
-		DumpFile( $filename, $form );
+		# Do we have a mailer?
+		if ( exists $_[HEAP]->{'MAILER'} ) {
+			# send it off!
+			$_[KERNEL]->post( $_[HEAP]->{'MAILER'}, 'http_report', $form );
 
-		if ( DEBUG ) {
-			warn "Saved $form->{subject} report to $filename";
+			if ( DEBUG ) {
+				warn "Sent $form->{subject} report to the mailer";
+			}
+		} else {
+			# calculate the filename
+			my $filename = File::Spec->catfile( $_[HEAP]->{'REPORTS'}, time() . '.' . sha1_hex( $form->{'report'} ) );
+			eval {
+				DumpFile( $filename, $form );
+			};
+			if ( $@ ) {
+				warn "Unable to save $form->{subject} report to $filename: $@";
+			} else {
+				if ( DEBUG ) {
+					warn "Saved $form->{subject} report to $filename";
+				}
+			}
 		}
 
 		# Do our stuff to HTTP::Response
@@ -232,7 +265,7 @@ sub got_req : State {
 1;
 __END__
 
-=for stopwords AnnoCPAN CPAN HOSTNAME RT TODO callback cgi
+=for stopwords AnnoCPAN CPAN HOSTNAME RT callback cgi
 
 =head1 NAME
 
@@ -274,9 +307,30 @@ This sets the alias of the session.
 
 The default is: POEGateway
 
+=head3 mailer
+
+This sets the mailer session that POEGateway will use to send reports. Useful to set if you have both running in the same process and you don't want
+to use the file-based method of saving reports. Beware: if the process/machine terminates and you have pending reports in the queue, they will be lost!
+
+The default is: undef ( not used )
+
+	use Test::Reporter::POEGateway;
+	use Test::Reporter::POEGateway::Mailer;
+
+	Test::Reporter::POEGateway->spawn(
+		'mailer'	=> 'mymailer',
+	);
+	Test::Reporter::POEGateway::Mailer->spawn(
+		'alias'		=> 'mymailer',
+		'poegateway'	=> 1,
+		'mailer'	=> 'SMTP',
+		'mailer_conf'	=> { ... },
+	);
+
 =head3 reports
 
-This sets the path where it will store received report submissions.
+This sets the path where it will store received report submissions. This effectively acts as a cache and lets the mailer pick up reports from the
+directory and send them.
 
 The default is: $ENV{HOME}/cpan_reports
 
