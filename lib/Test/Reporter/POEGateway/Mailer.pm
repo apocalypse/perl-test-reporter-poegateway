@@ -4,7 +4,7 @@ use strict; use warnings;
 
 # Initialize our version
 use vars qw( $VERSION );
-$VERSION = '0.01';
+$VERSION = '0.02';
 
 # Import what we need from the POE namespace
 use POE;
@@ -12,11 +12,6 @@ use POE::Wheel::Run;
 use POE::Filter::Reference;
 use POE::Filter::Line;
 use base 'POE::Session::AttributeBased';
-
-# Misc modules we need
-use YAML::Tiny qw( LoadFile );
-use File::Spec;
-use File::Copy qw( move );
 
 # Set some constants
 BEGIN {
@@ -58,6 +53,7 @@ sub spawn {
 	} else {
 		# setup the path to read reports from
 		if ( ! exists $opt{'reports'} or ! defined $opt{'reports'} ) {
+			require File::Spec;
 			my $path = File::Spec->catdir( $ENV{HOME}, 'cpan_reports' );
 			if ( DEBUG ) {
 				warn "Using default REPORTS = $path";
@@ -102,6 +98,31 @@ sub spawn {
 
 		# Set the default
 		$opt{'alias'} = 'POEGateway-Mailer';
+	}
+
+	# Setup the session
+	if ( ! exists $opt{'session'} or ! defined $opt{'session'} ) {
+		if ( DEBUG ) {
+			warn 'Using default SESSION = caller';
+		}
+
+		# set the default
+		$opt{'session'} = undef;
+	} else {
+		# Convert it to an ID
+		if ( UNIVERSAL::isa( $opt{'session'}, 'POE::Session' ) ) {
+			$opt{'session'} = $opt{'session'}->ID;
+		}
+	}
+
+	# setup the "maildone" event
+	if ( ! exists $opt{'maildone'} or ! defined $opt{'maildone'} ) {
+		if ( DEBUG ) {
+			warn 'Using default MAILDONE = undef';
+		}
+
+		# Set the default
+		$opt{'maildone'} = undef;
 	}
 
 	# setup the mailing subprocess
@@ -155,6 +176,9 @@ sub spawn {
 			'MAILER_CONF'		=> $opt{'mailer_conf'},
 			'HOST_ALIASES'		=> $opt{'host_aliases'},
 
+			'SESSION'		=> $opt{'session'},
+			'MAILDONE'		=> $opt{'maildone'},
+
 			( exists $opt{'poegateway'} ? ( 'POEGATEWAY' => 1 ) : (
 				'REPORTS'		=> $opt{'reports'},
 				'DIRWATCH_ALIAS'	=> $opt{'dirwatch_alias'},
@@ -192,6 +216,32 @@ sub _start : State {
 			'file_callback'	=> $_[SESSION]->postback( 'got_new_file' ),
 			'interval'	=> $_[HEAP]->{'DIRWATCH_INTERVAL'},
 		);
+
+		# Load the necessary modules
+		require YAML::Tiny;
+		YAML::Tiny->import( qw( LoadFile ) );
+
+		require File::Copy;
+		File::Copy->import( qw( move ) );
+
+		require File::Spec;
+	}
+
+	# Setup the session
+	if ( ! defined $_[HEAP]->{'SESSION'} and defined $_[HEAP]->{'MAILDONE'} ) {
+		# Use the sender
+		if ( $_[KERNEL] == $_[SENDER] ) {
+			warn 'Not called from another POE session and SESSION was not set!';
+			$_[KERNEL]->yield( 'shutdown' );
+			return;
+		} else {
+			$_[HEAP]->{'SESSION'} = $_[SENDER]->ID;
+		}
+	}
+
+	# Give it a refcount
+	if ( defined $_[HEAP]->{'SESSION'} ) {
+		$_[KERNEL]->refcount_increment( $_[HEAP]->{'SESSION'}, __PACKAGE__ );
 	}
 
 	return;
@@ -211,6 +261,10 @@ sub _child : State {
 }
 
 sub shutdown : State {
+	if ( DEBUG ) {
+		warn "Shutting down alias '" . $_[HEAP]->{'ALIAS'} . "'";
+	}
+
 	# cleanup some stuff
 	$_[KERNEL]->alias_remove( $_[HEAP]->{'ALIAS'} );
 
@@ -218,6 +272,11 @@ sub shutdown : State {
 	if ( exists $_[HEAP]->{'DIRWATCH'} and defined $_[HEAP]->{'DIRWATCH'} ) {
 		$_[HEAP]->{'DIRWATCH'}->shutdown;
 		undef $_[HEAP]->{'DIRWATCH'};
+	}
+
+	# decrement the refcount
+	if ( defined $_[HEAP]->{'SESSION'} ) {
+		$_[KERNEL]->refcount_decrement( $_[HEAP]->{'SESSION'}, __PACKAGE__ );
 	}
 
 	$_[HEAP]->{'SHUTDOWN'} = 1;
@@ -311,14 +370,16 @@ sub send_report : State {
 	if ( exists $_[HEAP]->{'HOST_ALIASES'}->{ $data->{'_sender'} } ) {
 		# do some regex tricks...
 		$data->{'report'} =~ s/Environment\s+variables\:\n\n/Environment variables:\n\n    CPAN_SMOKER = $_[HEAP]->{'HOST_ALIASES'}->{ $data->{'_sender'} } ( $data->{'_sender'} )\n/;
+		$data->{'_host'} = $_[HEAP]->{'HOST_ALIASES'}->{ $data->{'_sender'} };
 	}
 
 	# send it off to the subprocess!
+	$data->{'_time'} = time;
 	$_[HEAP]->{'WHEEL'}->put( {
 		'ACTION'	=> 'SEND',
 		'DATA'		=> $data,
 	} );
-	$_[HEAP]->{'WHEEL_WORKING'} = 1;
+	$_[HEAP]->{'WHEEL_WORKING'} = $data;
 
 	return;
 }
@@ -474,9 +535,15 @@ sub Got_STDOUT : State {
 	# We should get: "OK" or "NOK $error"
 	if ( $data =~ /^N?OK/ ) {
 		my $file = shift( @{ $_[HEAP]->{'NEWFILES'} } );
+		my $data = $_[HEAP]->{'WHEEL_WORKING'};
 		$_[HEAP]->{'WHEEL_WORKING'} = 0;
 
-		if ( $data eq 'OK' ) {
+		if ( $data =~ /^OK\s+(.+)$/ ) {
+			my $message_id = $1;
+			if ( $message_id =~ /^\<(.+)\>$/ ) {
+				$message_id = $1;	# remove <...> around the ID
+			}
+
 			if ( ! ref $file ) {
 				if ( DEBUG ) {
 					warn "Successfully sent report: $file";
@@ -491,6 +558,16 @@ sub Got_STDOUT : State {
 			}
 
 			$_[KERNEL]->yield( 'send_report' );
+
+			if ( defined $_[HEAP]->{'MAILDONE'} and ref $data ) {
+				$_[KERNEL]->post( $_[HEAP]->{'SESSION'}, $_[HEAP]->{'MAILDONE'}, {
+					'STARTTIME'	=> delete $data->{'_time'},
+					'STOPTIME'	=> time,
+					'DATA'		=> $data,
+					'STATUS'	=> 1,
+					'MSGID'		=> $message_id,
+				} );
+			}
 		} elsif ( $data =~ /^NOK\s+(.+)$/ ) {
 			my $err = $1;
 
@@ -501,6 +578,16 @@ sub Got_STDOUT : State {
 			} else {
 				warn "Unable to send report for '$file->{subject}': $err";
 				$_[KERNEL]->yield( 'send_report' );
+			}
+
+			if ( defined $_[HEAP]->{'MAILDONE'} and ref $data ) {
+				$_[KERNEL]->post( $_[HEAP]->{'SESSION'}, $_[HEAP]->{'MAILDONE'}, {
+					'STARTTIME'	=> delete $data->{'_time'},
+					'STOPTIME'	=> time,
+					'DATA'		=> $data,
+					'STATUS'	=> 0,
+					'ERROR'		=> $err,
+				} );
 			}
 		}
 	} elsif ( $data =~ /^ERROR\s+(.+)$/ ) {
@@ -517,7 +604,7 @@ sub Got_STDOUT : State {
 1;
 __END__
 
-=for stopwords DirWatch TODO VM gentoo ip poegateway
+=for stopwords DirWatch TODO VM gentoo ip poegateway ARG maildone
 
 =head1 NAME
 
@@ -569,6 +656,22 @@ This sets the alias of the session.
 
 The default is: POEGateway-Mailer
 
+=head3 mailer
+
+This sets the mailer subclass. The only one bundled with this distribution is L<Test::Reporter::POEGateway::Mailer::SMTP>.
+
+NOTE: This module automatically prepends "Test::Reporter::POEGateway::Mailer::" to the string.
+
+The default is: SMTP
+
+=head3 mailer_conf
+
+This sets the configuration for the selected mailer. Please look at the POD for your selected mailer for what options is accepted.
+
+NOTE: This needs to be a hashref!
+
+The default is: {}
+
 =head3 poegateway
 
 If this option is present in the arguments, this module will receive reports directly from the L<Test::Reporter::POEGateway> session. You cannot
@@ -598,22 +701,6 @@ NOTE: If this module fails to send a report due to various reasons, it will move
 
 The default is: $ENV{HOME}/cpan_reports
 
-=head3 mailer
-
-This sets the mailer subclass. The only one bundled with this distribution is L<Test::Reporter::POEGateway::Mailer::SMTP>.
-
-NOTE: This module automatically prepends "Test::Reporter::POEGateway::Mailer::" to the string.
-
-The default is: SMTP
-
-=head3 mailer_conf
-
-This sets the configuration for the selected mailer. Please look at the POD for your selected mailer for what options is accepted.
-
-NOTE: This needs to be a hashref!
-
-The default is: {}
-
 =head3 dirwatch_alias
 
 This sets the alias of the L<POE::Component::DirWatch> session. Normally you don't need to touch the DirWatch session, but it is useful in certain
@@ -641,6 +728,38 @@ Here's a sample alias list:
 	},
 
 The default is: {}
+
+=head3 maildone
+
+This sets the event which will receive notifications when an email is sent or not. Receives one data structure in ARG0:
+
+	{
+		'STARTTIME'	=> 1260432932,					# self-explanatory
+		'STOPTIME'	=> 1260432965,					# self-explanatory
+
+		'STATUS'	=> 1,						# boolean value for success
+		'MSGID'		=> '1260563289.Ca1bb50.15987@smoker-master',	# will exist if status == 1
+		'ERROR'		=> 'SMTP AUTH failed',				# will exist if status == 0
+
+		'DATA'		=> {						# The report's data
+			'report'	=> 'TEXT OF REPORT',
+			'subject'	=> 'PASS Acme-LOLCAT-0.0.5 x86_64-linux 2.6.31-14-server',
+			'from'		=> 'apocal@cpan.org',
+			'via'		=> 'Test::Reporter 1.54, via CPANPLUS 0.88, via Test::Reporter::POEGateway 0.01',
+			'_sender'	=> '192.168.0.2',
+
+			'_host'		=> 'my laptop',				# will exist if _sender matched a host alias
+		},
+	}
+
+The default is: undef ( not enabled )
+
+=head3 session
+
+This sets the session which will receive the notification event. You can either use a POE session id, alias, or reference. You can just spawn the component
+inside another session and it will automatically receive the notifications.
+
+The default is: undef ( caller session )
 
 =head2 Commands
 

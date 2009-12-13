@@ -1,5 +1,11 @@
 Revision history for Perl extension Test::Reporter::POEGateway
 
+* 0.02
+
+	Added the "maildone" event to the emailer
+	Minor POD tweaks
+	Don't load file-related modules if we're enabling poegateway in the mailer
+
 * 0.01
 
 	initial release
