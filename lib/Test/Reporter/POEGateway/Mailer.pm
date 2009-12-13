@@ -535,7 +535,7 @@ sub Got_STDOUT : State {
 	# We should get: "OK $msgid" or "NOK $error"
 	if ( $data =~ /^N?OK/ ) {
 		my $file = shift( @{ $_[HEAP]->{'NEWFILES'} } );
-		my $data = $_[HEAP]->{'WHEEL_WORKING'};
+		my $report = $_[HEAP]->{'WHEEL_WORKING'};
 		$_[HEAP]->{'WHEEL_WORKING'} = 0;
 
 		if ( $data =~ /^OK\s+(.+)\z/ ) {
@@ -559,11 +559,11 @@ sub Got_STDOUT : State {
 
 			$_[KERNEL]->yield( 'send_report' );
 
-			if ( defined $_[HEAP]->{'MAILDONE'} and ref $data ) {
+			if ( defined $_[HEAP]->{'MAILDONE'} and ref $report ) {
 				$_[KERNEL]->post( $_[HEAP]->{'SESSION'} => $_[HEAP]->{'MAILDONE'}, {
-					'STARTTIME'	=> delete $data->{'_time'},
+					'STARTTIME'	=> delete $report->{'_time'},
 					'STOPTIME'	=> time,
-					'DATA'		=> $data,
+					'DATA'		=> $report,
 					'STATUS'	=> 1,
 					'MSGID'		=> $message_id,
 				} );
@@ -580,22 +580,24 @@ sub Got_STDOUT : State {
 				$_[KERNEL]->yield( 'send_report' );
 			}
 
-			if ( defined $_[HEAP]->{'MAILDONE'} and ref $data ) {
+			if ( defined $_[HEAP]->{'MAILDONE'} and ref $report ) {
 				$_[KERNEL]->post( $_[HEAP]->{'SESSION'} => $_[HEAP]->{'MAILDONE'}, {
-					'STARTTIME'	=> delete $data->{'_time'},
+					'STARTTIME'	=> delete $report->{'_time'},
 					'STOPTIME'	=> time,
-					'DATA'		=> $data,
+					'DATA'		=> $report,
 					'STATUS'	=> 0,
 					'ERROR'		=> $err,
 				} );
 			}
+		} else {
+			die "Malformed line: '$data'";
 		}
 	} elsif ( $data =~ /^ERROR\s+(.+)\z/ ) {
 		# hmpf!
 		my $err = $1;
 		warn "Unexpected error: $err";
 	} else {
-		warn "Unknown line: $data";
+		warn "Unknown line: '$data'";
 	}
 
 	return;
