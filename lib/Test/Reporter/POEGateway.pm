@@ -13,9 +13,6 @@ use base 'POE::Session::AttributeBased';
 
 # Misc stuff
 use HTTP::Request::Params;
-use YAML::Tiny qw( DumpFile );
-use Digest::SHA qw( sha1_hex );
-use File::Spec;
 
 # Set some constants
 BEGIN {
@@ -88,6 +85,7 @@ sub spawn {
 	} else {
 		# setup the path to store reports
 		if ( ! exists $opt{'reports'} or ! defined $opt{'reports'} ) {
+			require File::Spec;
 			my $path = File::Spec->catdir( $ENV{HOME}, 'cpan_reports' );
 			if ( DEBUG ) {
 				warn "Using default REPORTS = '$path'";
@@ -165,6 +163,17 @@ sub _start : State {
 			},
 		],
 	) or die 'Unable to create httpd';
+
+	# load the file-related modules we need
+	if ( exists $_[HEAP]->{'REPORTS'} ) {
+		require YAML::Tiny;
+		YAML::Tiny->import( qw( DumpFile ) );
+
+		require Digest::SHA1;
+		Digest::SHA1->import( qw( sha1_hex ) );
+
+		require File::Spec;
+	}
 
 	return;
 }

@@ -532,15 +532,15 @@ sub Got_STDOUT : State {
 		warn "Got stdout ($data)";
 	}
 
-	# We should get: "OK" or "NOK $error"
+	# We should get: "OK $msgid" or "NOK $error"
 	if ( $data =~ /^N?OK/ ) {
 		my $file = shift( @{ $_[HEAP]->{'NEWFILES'} } );
 		my $data = $_[HEAP]->{'WHEEL_WORKING'};
 		$_[HEAP]->{'WHEEL_WORKING'} = 0;
 
-		if ( $data =~ /^OK\s+(.+)$/ ) {
+		if ( $data =~ /^OK\s+(.+)\z/ ) {
 			my $message_id = $1;
-			if ( $message_id =~ /^\<(.+)\>$/ ) {
+			if ( $message_id =~ /^\<([^\>]+)\>\z/ ) {
 				$message_id = $1;	# remove <...> around the ID
 			}
 
@@ -560,7 +560,7 @@ sub Got_STDOUT : State {
 			$_[KERNEL]->yield( 'send_report' );
 
 			if ( defined $_[HEAP]->{'MAILDONE'} and ref $data ) {
-				$_[KERNEL]->post( $_[HEAP]->{'SESSION'}, $_[HEAP]->{'MAILDONE'}, {
+				$_[KERNEL]->post( $_[HEAP]->{'SESSION'} => $_[HEAP]->{'MAILDONE'}, {
 					'STARTTIME'	=> delete $data->{'_time'},
 					'STOPTIME'	=> time,
 					'DATA'		=> $data,
@@ -568,7 +568,7 @@ sub Got_STDOUT : State {
 					'MSGID'		=> $message_id,
 				} );
 			}
-		} elsif ( $data =~ /^NOK\s+(.+)$/ ) {
+		} elsif ( $data =~ /^NOK\s+(.+)\z/ ) {
 			my $err = $1;
 
 			# argh!
@@ -581,7 +581,7 @@ sub Got_STDOUT : State {
 			}
 
 			if ( defined $_[HEAP]->{'MAILDONE'} and ref $data ) {
-				$_[KERNEL]->post( $_[HEAP]->{'SESSION'}, $_[HEAP]->{'MAILDONE'}, {
+				$_[KERNEL]->post( $_[HEAP]->{'SESSION'} => $_[HEAP]->{'MAILDONE'}, {
 					'STARTTIME'	=> delete $data->{'_time'},
 					'STOPTIME'	=> time,
 					'DATA'		=> $data,
@@ -590,7 +590,7 @@ sub Got_STDOUT : State {
 				} );
 			}
 		}
-	} elsif ( $data =~ /^ERROR\s+(.+)$/ ) {
+	} elsif ( $data =~ /^ERROR\s+(.+)\z/ ) {
 		# hmpf!
 		my $err = $1;
 		warn "Unexpected error: $err";
