@@ -112,13 +112,21 @@ sub setup_smtp {
 	# Do AUTH if needed
 	if ( exists $config->{'auth_user'} ) {
 		if ( ! $smtp->auth( $config->{'auth_user'}, $config->{'auth_pass'} ) ) {
-			$smtp->quit;
-			undef $smtp;
-			return "Unable to AUTH to the smtp server";
+			return smtp_error( "Unable to AUTH to the smtp server" );
 		}
 	}
 
 	return;
+}
+
+sub smtp_error {
+	my $err = shift;
+
+	# return an error and cleanup smtp
+	$err .= ": '" . $smtp->message() . "' (" . $smtp->code() . ")";
+	$smtp->quit;
+	undef $smtp;
+	return $err;
 }
 
 sub DO_SEND {
@@ -132,15 +140,11 @@ sub DO_SEND {
 
 	# send it!
 	if ( ! $smtp->mail( $data->{'from'} ) ) {
-		$smtp->quit;
-		undef $smtp;
-		return [ 0, "Unable to set 'from' address" ];
+		return [ 0, smtp_error( "Unable to set 'from' address" ) ];
 	}
 
 	if ( ! $smtp->to( $config->{'to'} ) ) {
-		$smtp->quit;
-		undef $smtp;
-		return [ 0, "Unable to set 'to' address" ];
+		return [ 0, smtp_error( "Unable to set 'to' address" ) ];
 	}
 
 	# Prepare the data
@@ -157,9 +161,7 @@ sub DO_SEND {
 	);
 
 	if ( ! $smtp->data( $email->as_string ) ) {
-		$smtp->quit;
-		undef $smtp;
-		return [ 0, "Unable to send message" ];
+		return [ 0, smtp_error( "Unable to send message" ) ];
 	}
 
 	# Successful send of message!
