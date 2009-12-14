@@ -319,6 +319,11 @@ sub http_report : State {
 	return;
 }
 
+# Returns the length of the queue
+sub queue : State {
+	return scalar @{ $_[HEAP]->{'NEWFILES'} };
+}
+
 sub send_report : State {
 	if ( ! defined $_[HEAP]->{'WHEEL'} ) {
 		# Setup the subprocess!
@@ -540,9 +545,6 @@ sub Got_STDOUT : State {
 
 		if ( $data =~ /^OK\s+(.+)\z/ ) {
 			my $message_id = $1;
-			if ( $message_id =~ /^\<([^\>]+)\>\z/ ) {
-				$message_id = $1;	# remove <...> around the ID
-			}
 
 			if ( ! ref $file ) {
 				if ( DEBUG ) {
@@ -570,6 +572,22 @@ sub Got_STDOUT : State {
 			}
 		} elsif ( $data =~ /^NOK\s+(.+)\z/ ) {
 			my $err = $1;
+
+			# Is this a known error?
+			#
+			# This error happens with my postfix smtpd, because the link was left open too long between emails
+			# Unable to send report for '/home/cpan/cpan_reports/1260750049.58c5ed3e0013517d0f168975795c2bba95f2be79': Unable to set 'from'
+			# address: '4.4.2 mail.0ne.us Error: timeout exceeded' (421) at /usr/local/share/perl/5.10.0/Test/Reporter/POEGateway/Mailer.pm line 576.
+			if ( $err =~ /timeout\s+exceeded/ ) {
+				# Retry the email, but push it on the bottom of the queue!
+				if ( DEBUG ) {
+					warn "Received timeout for '$file', will give it another shot!";
+				}
+
+				push( @{ $_[HEAP]->{'NEWFILES'} }, $file );
+				$_[KERNEL]->yield( 'send_report' );
+				return;
+			}
 
 			# argh!
 			if ( ! ref $file ) {
@@ -712,7 +730,7 @@ The default is: POEGateway-Mailer-DirWatch
 
 =head3 dirwatch_interval
 
-This sets the interval passed to L<POE::Component::DirWatch>, please see the pod for more detail.
+This sets the interval in seconds passed to L<POE::Component::DirWatch>, please see the pod for more detail.
 
 The default is: 120
 
@@ -765,7 +783,14 @@ The default is: undef ( caller session )
 
 =head2 Commands
 
-There is only one command you can use, as this is a very simple module.
+There is only a few command you can use, as this is a very simple module.
+
+=head3 queue
+
+Receives the email queue count. You need to call this via $poe_kernel->call( ... ) !
+
+	my $count = $_[KERNEL]->call( 'POEGateway-Mailer', 'queue' );
+	print "Number of pending emails in the queue: $count\n";
 
 =head3 shutdown
 

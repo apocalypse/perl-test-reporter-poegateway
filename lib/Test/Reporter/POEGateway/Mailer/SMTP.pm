@@ -109,6 +109,10 @@ sub setup_smtp {
 		%{ $config->{'smtp_opts'} },
 	);
 
+	if ( ! defined $smtp ) {
+		return "Unable to connect to the smtp server";
+	}
+
 	# Do AUTH if needed
 	if ( exists $config->{'auth_user'} ) {
 		if ( ! $smtp->auth( $config->{'auth_user'}, $config->{'auth_pass'} ) ) {
@@ -119,13 +123,17 @@ sub setup_smtp {
 	return;
 }
 
+# return an error and cleanup smtp
 sub smtp_error {
 	my $err = shift;
 
-	# return an error and cleanup smtp
-	$err .= ": '" . $smtp->message() . "' (" . $smtp->code() . ")";
+	my $msg = $smtp->message;
+	$msg =~ s/\s+\z//;				# damn Net::SMTP/Cmd not chomping it!
+	$err .= ": '$msg' (" . $smtp->code() . ")";
+
 	$smtp->quit;
 	undef $smtp;
+
 	return $err;
 }
 
@@ -148,7 +156,7 @@ sub DO_SEND {
 	}
 
 	# Prepare the data
-	my $id = Email::MessageID->new->in_brackets;
+	my $id = Email::MessageID->new->as_string;
 	my $email = Email::Simple->create(
 		'body'		=> $data->{'report'},
 		'header'	=> [
@@ -156,7 +164,7 @@ sub DO_SEND {
 			'From'			=> $data->{'from'},
 			'Subject'		=> $data->{'subject'},
 			'X-Reported-Via'	=> $data->{'via'},
-			'Message-ID'		=> $id,
+			'Message-ID'		=> '<' . $id . '>',	# required, look at Email::MessageID for the note!
 		],
 	);
 
@@ -247,10 +255,6 @@ The default is: undef
 The password to use for SMTP AUTH to the server.
 
 The default is: undef
-
-=head1 EXPORT
-
-None.
 
 =head1 SEE ALSO
 

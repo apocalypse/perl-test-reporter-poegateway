@@ -5,6 +5,7 @@ Revision history for Perl extension Test::Reporter::POEGateway
 	Added the "maildone" event to the emailer
 	Minor POD tweaks
 	Don't load file-related modules if we're using intra-session passing of reports
+	Improved SMTP error reporting
 
 * 0.01
 
