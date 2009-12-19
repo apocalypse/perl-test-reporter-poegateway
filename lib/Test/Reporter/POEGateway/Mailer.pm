@@ -4,7 +4,7 @@ use strict; use warnings;
 
 # Initialize our version
 use vars qw( $VERSION );
-$VERSION = '0.02';
+$VERSION = '0.03';
 
 # Import what we need from the POE namespace
 use POE;
@@ -65,14 +65,14 @@ sub spawn {
 
 		# validate the report path
 		if ( ! -d $opt{'reports'} ) {
-			warn "The report path does not exist ($opt{'reports'}), please make sure it is a writable directory!";
+			warn "The REPORTS path does not exist ($opt{'reports'}), please make sure it is a writable directory!";
 			return 0;
 		}
 
 		# setup the dirwatch alias
 		if ( ! exists $opt{'dirwatch_alias'} or ! defined $opt{'dirwatch_alias'} ) {
 			if ( DEBUG ) {
-				warn 'Using default dirwatch_alias = POEGateway-Mailer-DirWatch';
+				warn 'Using default DIRWATCH_ALIAS = POEGateway-Mailer-DirWatch';
 			}
 
 			# Set the default
@@ -82,7 +82,7 @@ sub spawn {
 		# setup the dirwatch interval
 		if ( ! exists $opt{'dirwatch_interval'} or ! defined $opt{'dirwatch_interval'} ) {
 			if ( DEBUG ) {
-				warn 'Using default dirwatch_interval = 120';
+				warn 'Using default DIRWATCH_INTERVAL = 120';
 			}
 
 			# Set the default
@@ -128,7 +128,7 @@ sub spawn {
 	# setup the mailing subprocess
 	if ( ! exists $opt{'mailer'} or ! defined $opt{'mailer'} ) {
 		if ( DEBUG ) {
-			warn 'Using default mailer = SMTP';
+			warn 'Using default MAILER = SMTP';
 		}
 
 		# Set the default
@@ -140,14 +140,14 @@ sub spawn {
 	# setup the mailing subprocess config
 	if ( ! exists $opt{'mailer_conf'} or ! defined $opt{'mailer_conf'} ) {
 		if ( DEBUG ) {
-			warn 'Using default mailer_conf = {}';
+			warn 'Using default MAILER_CONF = {}';
 		}
 
 		# Set the default
 		$opt{'mailer_conf'} = {};
 	} else {
 		if ( ref( $opt{'mailer_conf'} ) ne 'HASH' ) {
-			warn "The mailer_conf argument is not a valid HASH reference!";
+			warn "The MAILER_CONF argument is not a valid HASH reference!";
 			return 0;
 		}
 	}
@@ -155,14 +155,29 @@ sub spawn {
 	# setup the host aliases
 	if ( ! exists $opt{'host_aliases'} or ! defined $opt{'host_aliases'} ) {
 		if ( DEBUG ) {
-			warn 'Using default host_aliases = {}';
+			warn 'Using default HOST_ALIASES = {}';
 		}
 
 		# Set the default
 		$opt{'host_aliases'} = {};
 	} else {
 		if ( ref( $opt{'host_aliases'} ) ne 'HASH' ) {
-			warn "The host_aliases argument is not a valid HASH reference!";
+			warn "The HOST_ALIASES argument is not a valid HASH reference!";
+			return 0;
+		}
+	}
+
+	# setup the delay between emails
+	if ( ! exists $opt{'delay'} or ! defined $opt{'delay'} ) {
+		if ( DEBUG ) {
+			warn 'Using default DELAY = 0';
+		}
+
+		# Set the default
+		$opt{'delay'} = 0;
+	} else {
+		if ( $opt{'delay'} !~ /^\d+$/ ) {
+			warn 'The DELAY argument is not a valid integer >= 0!';
 			return 0;
 		}
 	}
@@ -175,6 +190,7 @@ sub spawn {
 			'MAILER'		=> $opt{'mailer'},
 			'MAILER_CONF'		=> $opt{'mailer_conf'},
 			'HOST_ALIASES'		=> $opt{'host_aliases'},
+			'DELAY'			=> $opt{'delay'},
 
 			'SESSION'		=> $opt{'session'},
 			'MAILDONE'		=> $opt{'maildone'},
@@ -282,6 +298,9 @@ sub shutdown : State {
 	$_[HEAP]->{'SHUTDOWN'} = 1;
 	undef $_[HEAP]->{'WHEEL'};
 
+	# remove the delay if needed
+	$_[KERNEL]->alarm_remove( delete $_[HEAP]->{'_delay'} ) if exists $_[HEAP]->{'_delay'};
+
 	return;
 }
 
@@ -324,6 +343,12 @@ sub queue : State {
 	return scalar @{ $_[HEAP]->{'NEWFILES'} };
 }
 
+sub send_report_delayed : State {
+	delete $_[HEAP]->{'_delay'} if exists $_[HEAP]->{'_delay'};
+	$_[KERNEL]->yield( 'send_report' );
+	return;
+}
+
 sub send_report : State {
 	if ( ! defined $_[HEAP]->{'WHEEL'} ) {
 		# Setup the subprocess!
@@ -332,6 +357,10 @@ sub send_report : State {
 	}
 
 	if ( $_[HEAP]->{'WHEEL_WORKING'} ) {
+		return;
+	}
+
+	if ( exists $_[HEAP]->{'_delay'} ) {
 		return;
 	}
 
@@ -406,7 +435,12 @@ sub save_failure : State {
 	move( $file, $filename ) or die "Unable to move '$file': $!";
 
 	# done with saving, let's retry the next report
-	$_[KERNEL]->yield( 'send_report' );
+	# do we need to delay between emails?
+	if ( $_[HEAP]->{'DELAY'} > 0 ) {
+		$_[HEAP]->{'_delay'} = $_[KERNEL]->delay_set( 'send_report_delayed' => $_[HEAP]->{'DELAY'} );
+	} else {
+		$_[KERNEL]->yield( 'send_report' );
+	}
 
 	return;
 }
@@ -559,7 +593,12 @@ sub Got_STDOUT : State {
 				}
 			}
 
-			$_[KERNEL]->yield( 'send_report' );
+			# do we need to delay between emails?
+			if ( $_[HEAP]->{'DELAY'} > 0 ) {
+				$_[HEAP]->{'_delay'} = $_[KERNEL]->delay_set( 'send_report_delayed' => $_[HEAP]->{'DELAY'} );
+			} else {
+				$_[KERNEL]->yield( 'send_report' );
+			}
 
 			if ( defined $_[HEAP]->{'MAILDONE'} and ref $report ) {
 				$_[KERNEL]->post( $_[HEAP]->{'SESSION'} => $_[HEAP]->{'MAILDONE'}, {
@@ -585,7 +624,14 @@ sub Got_STDOUT : State {
 				}
 
 				push( @{ $_[HEAP]->{'NEWFILES'} }, $file );
-				$_[KERNEL]->yield( 'send_report' );
+
+				# do we need to delay between emails?
+				if ( $_[HEAP]->{'DELAY'} > 0 ) {
+					$_[HEAP]->{'_delay'} = $_[KERNEL]->delay_set( 'send_report_delayed' => $_[HEAP]->{'DELAY'} );
+				} else {
+					$_[KERNEL]->yield( 'send_report' );
+				}
+
 				return;
 			}
 
@@ -595,7 +641,13 @@ sub Got_STDOUT : State {
 				$_[KERNEL]->yield( 'save_failure', $file, 'send' );
 			} else {
 				warn "Unable to send report for '$file->{subject}': $err";
-				$_[KERNEL]->yield( 'send_report' );
+
+				# do we need to delay between emails?
+				if ( $_[HEAP]->{'DELAY'} > 0 ) {
+					$_[HEAP]->{'_delay'} = $_[KERNEL]->delay_set( 'send_report_delayed' => $_[HEAP]->{'DELAY'} );
+				} else {
+					$_[KERNEL]->yield( 'send_report' );
+				}
 			}
 
 			if ( defined $_[HEAP]->{'MAILDONE'} and ref $report ) {
@@ -624,7 +676,7 @@ sub Got_STDOUT : State {
 1;
 __END__
 
-=for stopwords DirWatch TODO VM gentoo ip poegateway ARG maildone
+=for stopwords DirWatch TODO VM gentoo ip poegateway ARG maildone emailer
 
 =head1 NAME
 
@@ -691,6 +743,12 @@ This sets the configuration for the selected mailer. Please look at the POD for 
 NOTE: This needs to be a hashref!
 
 The default is: {}
+
+=head3 delay
+
+This sets the delay in seconds between email sends. This is useful to "throttle" your emailer. Set to 0 to disable any delay.
+
+The default is: 0
 
 =head3 poegateway
 

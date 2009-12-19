@@ -1,5 +1,9 @@
 Revision history for Perl extension Test::Reporter::POEGateway
 
+* 0.03
+
+	Added the "delay" argument to the emailer for throttling
+
 * 0.02
 
 	Added the "maildone" event to the emailer
