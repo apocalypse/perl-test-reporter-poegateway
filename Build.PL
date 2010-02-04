@@ -24,7 +24,7 @@ my $build = Module::Build->new(
 	'requires'		=> {
 		# POE Stuff
 		'POE'					=> 0,
-		'POE::Session::AttributeBased'		=> 0,
+		'POE::Session::AttributeBased'		=> '0.09',
 		'POE::Component::Server::SimpleHTTP'	=> 0,
 		'POE::Component::DirWatch'		=> 0,
 
@@ -36,7 +36,7 @@ my $build = Module::Build->new(
 		# Misc stuff
 		'HTTP::Request::Params'		=> 0,
 		'YAML::Tiny'			=> 0,
-		'Digest::SHA'			=> 0,
+		'Digest::SHA1'			=> 0,
 		'File::Spec'			=> 0,
 		'File::Copy'			=> 0,
 

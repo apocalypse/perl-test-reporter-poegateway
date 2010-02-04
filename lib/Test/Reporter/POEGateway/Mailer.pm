@@ -4,7 +4,7 @@ use strict; use warnings;
 
 # Initialize our version
 use vars qw( $VERSION );
-$VERSION = '0.03';
+$VERSION = '0.04';
 
 # Import what we need from the POE namespace
 use POE;
@@ -401,6 +401,7 @@ sub send_report : State {
 	}
 
 	# do some housekeeping
+	## no critic ( ProhibitAccessOfPrivateData )
 	if ( exists $_[HEAP]->{'HOST_ALIASES'}->{ $data->{'_sender'} } ) {
 		# do some regex tricks...
 		$data->{'report'} =~ s/Environment\s+variables\:\n\n/Environment variables:\n\n    CPAN_SMOKER = $_[HEAP]->{'HOST_ALIASES'}->{ $data->{'_sender'} } ( $data->{'_sender'} )\n/;
@@ -602,7 +603,7 @@ sub Got_STDOUT : State {
 
 			if ( defined $_[HEAP]->{'MAILDONE'} and ref $report ) {
 				$_[KERNEL]->post( $_[HEAP]->{'SESSION'} => $_[HEAP]->{'MAILDONE'}, {
-					'STARTTIME'	=> delete $report->{'_time'},
+					'STARTTIME'	=> delete $report->{'_time'},	## no critic ( ProhibitAccessOfPrivateData )
 					'STOPTIME'	=> time,
 					'DATA'		=> $report,
 					'STATUS'	=> 1,
@@ -652,7 +653,7 @@ sub Got_STDOUT : State {
 
 			if ( defined $_[HEAP]->{'MAILDONE'} and ref $report ) {
 				$_[KERNEL]->post( $_[HEAP]->{'SESSION'} => $_[HEAP]->{'MAILDONE'}, {
-					'STARTTIME'	=> delete $report->{'_time'},
+					'STARTTIME'	=> delete $report->{'_time'},	## no critic ( ProhibitAccessOfPrivateData )
 					'STOPTIME'	=> time,
 					'DATA'		=> $report,
 					'STATUS'	=> 0,
@@ -676,7 +677,7 @@ sub Got_STDOUT : State {
 1;
 __END__
 
-=for stopwords DirWatch TODO VM gentoo ip poegateway ARG maildone emailer
+=for stopwords TODO VM gentoo ip poegateway maildone emailer DirWatch ARG
 
 =head1 NAME
 
@@ -876,7 +877,7 @@ Apocalypse E<lt>apocal@cpan.orgE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright 2009 by Apocalypse
+Copyright 2010 by Apocalypse
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself.

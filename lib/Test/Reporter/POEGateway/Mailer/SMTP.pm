@@ -4,7 +4,7 @@ use strict; use warnings;
 
 # Initialize our version
 use vars qw( $VERSION );
-$VERSION = '0.03';
+$VERSION = '0.04';
 
 # Load some necessary modules
 use POE::Filter::Reference;
@@ -44,6 +44,7 @@ sub main {
 
 		# Process each data structure
 		foreach my $input ( @$data ) {
+			## no critic ( ProhibitAccessOfPrivateData )
 			# Now, we do the actual work depending on what kind of query it was
 			if ( $input->{'ACTION'} eq 'CONFIG' ) {
 				# Setup the config
@@ -81,6 +82,7 @@ sub DO_CONFIG {
 	$config = shift;
 
 	# set some sane defaults
+	## no critic ( ProhibitAccessOfPrivateData )
 	$config->{'to'} = 'cpan-testers@perl.org' if ! exists $config->{'to'};
 	$config->{'smtp_host'} = 'localhost' if ! exists $config->{'smtp_host'};
 	$config->{'smtp_opts'} = {} if ! exists $config->{'smtp_opts'};
@@ -93,6 +95,7 @@ sub DO_CONFIG {
 
 sub setup_smtp {
 	return if defined $smtp;
+	## no critic ( ProhibitAccessOfPrivateData )
 
 	# Do we want ssl?
 	my $pkg = 'Net::SMTP';
@@ -100,9 +103,7 @@ sub setup_smtp {
 		$pkg .= '::SSL';
 	}
 
-	## no critic ProhibitStringyEval
-	eval "require $pkg"; die $@ if $@;
-	## use critic
+	eval "require $pkg"; die $@ if $@;	## no critic ( ProhibitStringyEval )
 
 	$smtp = $pkg->new(
 		$config->{'smtp_host'},
@@ -147,6 +148,7 @@ sub DO_SEND {
 	}
 
 	# send it!
+	## no critic ( ProhibitAccessOfPrivateData )
 	if ( ! $smtp->mail( $data->{'from'} ) ) {
 		return [ 0, smtp_error( "Unable to set 'from' address" ) ];
 	}
@@ -272,7 +274,7 @@ Apocalypse E<lt>apocal@cpan.orgE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright 2009 by Apocalypse
+Copyright 2010 by Apocalypse
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself.

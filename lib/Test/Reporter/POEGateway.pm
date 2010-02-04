@@ -4,7 +4,7 @@ use strict; use warnings;
 
 # Initialize our version
 use vars qw( $VERSION );
-$VERSION = '0.03';
+$VERSION = '0.04';
 
 # Import what we need from the POE namespace
 use POE;
@@ -205,6 +205,7 @@ sub shutdown : State {
 sub got_req : State {
 	# ARG0 = HTTP::Request object, ARG1 = HTTP::Response object, ARG2 = the DIR that matched
 	my( $request, $response, $dirmatch ) = @_[ ARG0 .. ARG2 ];
+	## no critic ( ProhibitAccessOfPrivateData )
 
 	# a sane Test::Reporter submission?
 	# mostly copied from Test::Reporter::HTTPGateway, thanks!
@@ -274,7 +275,7 @@ sub got_req : State {
 1;
 __END__
 
-=for stopwords AnnoCPAN CPAN HOSTNAME RT callback cgi
+=for stopwords AnnoCPAN CPAN HOSTNAME RT callback cgi Kwalitee
 
 =head1 NAME
 
@@ -401,6 +402,10 @@ You can find documentation for this module with the perldoc command.
 
 =over 4
 
+=item * Search CPAN
+
+L<http://search.cpan.org/dist/Test-Reporter-POEGateway>
+
 =item * AnnoCPAN: Annotated CPAN documentation
 
 L<http://annocpan.org/dist/Test-Reporter-POEGateway>
@@ -409,17 +414,29 @@ L<http://annocpan.org/dist/Test-Reporter-POEGateway>
 
 L<http://cpanratings.perl.org/d/Test-Reporter-POEGateway>
 
-=item * RT: CPAN's request tracker
+=item * CPAN Forum
+
+L<http://cpanforum.com/dist/Test-Reporter-POEGateway>
+
+=item * RT: CPAN's Request Tracker
 
 L<http://rt.cpan.org/NoAuth/Bugs.html?Dist=Test-Reporter-POEGateway>
 
-=item * Search CPAN
-
-L<http://search.cpan.org/dist/Test-Reporter-POEGateway>
-
-=item * CPAN Testing Service
+=item * CPANTS Kwalitee
 
 L<http://cpants.perl.org/dist/overview/Test-Reporter-POEGateway>
+
+=item * CPAN Testers Results
+
+L<http://cpantesters.org/distro/T/Test-Reporter-POEGateway.html>
+
+=item * CPAN Testers Matrix
+
+L<http://matrix.cpantesters.org/?dist=Test-Reporter-POEGateway>
+
+=item * Git Source Code Repository
+
+L<http://github.com/apocalypse/perl-test-reporter-poegateway>
 
 =back
 
@@ -435,7 +452,7 @@ Apocalypse E<lt>apocal@cpan.orgE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright 2009 by Apocalypse
+Copyright 2010 by Apocalypse
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself.
