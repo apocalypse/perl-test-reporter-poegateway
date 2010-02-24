@@ -2,13 +2,14 @@ Build.PL
 MANIFEST
 MANIFEST.SKIP
 README
+Makefile.PL
+META.yml
+Changes
+LICENSE
+
 lib/Test/Reporter/POEGateway.pm
 lib/Test/Reporter/POEGateway/Mailer.pm
 lib/Test/Reporter/POEGateway/Mailer/SMTP.pm
-META.yml
-Changes
-Makefile.PL
-LICENSE
 
 examples/gateway.pl
 examples/mailer.pl

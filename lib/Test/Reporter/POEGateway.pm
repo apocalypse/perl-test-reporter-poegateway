@@ -275,7 +275,7 @@ sub got_req : State {
 1;
 __END__
 
-=for stopwords AnnoCPAN CPAN HOSTNAME RT callback cgi Kwalitee
+=for stopwords AnnoCPAN CPAN HOSTNAME RT callback cgi Kwalitee CPANTS com diff github
 
 =head1 NAME
 
@@ -435,6 +435,10 @@ L<http://cpantesters.org/distro/T/Test-Reporter-POEGateway.html>
 L<http://matrix.cpantesters.org/?dist=Test-Reporter-POEGateway>
 
 =item * Git Source Code Repository
+
+This code is currently hosted on github.com under the account "apocalypse". Please feel free to browse it
+and pull from it, or whatever. If you want to contribute patches, please send me a diff or prod me to pull
+from your repository :)
 
 L<http://github.com/apocalypse/perl-test-reporter-poegateway>
 
